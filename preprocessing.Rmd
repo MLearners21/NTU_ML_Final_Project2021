@@ -15,7 +15,9 @@ library(tidyverse)
 ```
 
 
+# Load and Sort data
 
+Combined all raw data sets into a great data set, and then spilt it to the training data and the test data.
 ```{r}
 Test_IDs <- read_csv("raw_data/Test_IDs.csv")
 Train_IDs <- read_csv("raw_data/Train_IDs.csv")
@@ -23,23 +25,64 @@ demographics <- read_csv("raw_data/demographics.csv")
 location <- read_csv("raw_data/location.csv")
 population <- read_csv("raw_data/population.csv")
 satisfaction <- read_csv("raw_data/satisfaction.csv")
+services <- read_csv("raw_data/services.csv")
 status <- read_csv("raw_data/status.csv")
-```
 
-```{r}
 data_all <- demographics %>% 
-  left_join(location) %>% 
-  left_join(population) %>%
-  left_join(satisfaction) %>% 
-  left_join(status)
-
+  left_join(location, by = "Customer ID") %>% 
+  left_join(population, by = "Zip Code") %>%
+  left_join(satisfaction, by = "Customer ID") %>% 
+  left_join(services, by = "Customer ID") %>% 
+  left_join(status, by = "Customer ID")
 data_train <- Train_IDs %>% left_join(data_all)
 data_test <- Test_IDs %>% left_join(data_all)
 
 write_csv(data_all, "data_all.csv")
 write_csv(data_train, "data_train.csv")
 write_csv(data_test, "data_test.csv")
+```
+
+
+
+```{r}
+var_names <- c("id", "count", "gender", "age", "under_30", "senior", "married", "dpnd", "n_dpnd", "country", "state", "city", "zip", "lat_long", "lat", "long", "ID", "pop", "score", "churn")
+var_types = "cdfdffffdffffccccddf"
+
+.data_all <- read_csv("data_all.csv")
+.data_train <- read_csv("data_train.csv", col_types = .col_types)
+.data_test <- read_csv("data_test.csv")
+
+names(.data_train) <- var_names
 
 ```
 
+# Discriptive statistics
+
+Varable's meaning discription: <https://community.ibm.com/community/user/businessanalytics/blogs/steven-macko/2019/07/11/telco-customer-churn-1113>
+
+```{r}
+dim(.data_train)
+
+summary(.data_train)
+
+.d1 <- .data_train %>% 
+  filter(!is.na(churn))
+summary(.d1)
+
+.d1 %>% 
+  select(age, under_30, senior, churn) %>% 
+  filter(is.na(age) | is.na(under_30) | is.na(senior)) %>% 
+  View()
+
+
+
+
+
+```
+
+# Variables/Features selection and missing data imputation
+
+```{r}
+
+```
 
