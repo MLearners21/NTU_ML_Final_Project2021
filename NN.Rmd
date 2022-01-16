@@ -1,0 +1,97 @@
+---
+title: "neural network"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(furrr)
+library(fastDummies)
+library(MLmetrics)
+library(modelr)
+library(keras)
+```
+
+```{r}
+result_sample <- read_csv("raw_data/sample_submission.csv", col_types = c("fd"))
+.data_all <- read.csv("data/data_all.csv", 
+                      na.strings = "",
+                      stringsAsFactors = TRUE)
+data_all <- .data_all %>% 
+  fill(gender:t_revenue, .direction = "updown") %>% 
+  select(-index, -id)
+
+# one hot encoding
+factor_cols <- names(data_all)[which(map_chr(data_all, class) == "factor")]
+data_all2 <- data_all %>% 
+  dummy_cols(select_columns = head(factor_cols, -1), # not includ churn
+             #remove_first_dummy = TRUE,
+             remove_selected_columns = TRUE) %>% 
+  mutate(churn = factor(churn,
+                        levels = c("No Churn", "Competitor", "Dissatisfaction", 
+                                   "Attitude", "Price", "Other"),
+                        labels = c(0, 1, 2, 3, 4, 5)) %>% as.character %>% as.integer())
+
+# split data
+data_test <- data_all2 %>% 
+  filter(is_test == TRUE) %>% 
+  select(-is_test, -is_train)
+dim(data_test)
+
+X_test <- data_test %>% select(-churn) %>% as.matrix()
+#y_test <- data_test$churn
+
+data_train <- data_all2 %>% 
+  filter(is_train == TRUE, !is.na(churn)) %>% 
+  select(-is_test, -is_train) 
+
+X_train <- data_train %>% select(-churn) %>% as.matrix()
+P <- dim(X_train)[2]
+y_train <- data_train$churn %>% to_categorical()
+```
+
+```{r}
+model <- keras_model_sequential()
+model %>% 
+  layer_dense(units = 60, activation = "relu", input_shape = P) %>% 
+  layer_dropout(rate = 0.2) %>% 
+  layer_dense(units = 60, activation = "relu") %>% 
+  layer_dropout(rate = 0.2) %>% 
+  layer_dense(units = 30, activation = "relu") %>% 
+  # #layer_dense(units = 15, activation = "relu") %>% 
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(unit = 6, activation = "softmax")
+
+model %>% 
+  compile(loss = "categorical_crossentropy",
+          optimizer = "adam", 
+          metrics = c("accuracy"))
+
+history <- model %>% 
+  fit(X_train, y_train,
+      epochs = 60, batch_size = NULL, validation_split = 0.1, verbose = 0)
+
+plot(history)
+```
+
+```{r}
+best_y_hat <- model %>% predict(X_test) %>% k_argmax() %>% as.integer()
+best_y_hat
+table(best_y_hat)
+
+
+.best_result <- tibble(`Customer ID` = .data_all$id[.data_all$is_test],
+                       `Churn Category` = best_y_hat)
+
+best_result <- result_sample %>% 
+  select(`Customer ID`) %>% 
+  left_join(.best_result)
+
+write_csv(best_result, "prediction/nn_try.csv")
+
+```
+

@@ -1,0 +1,293 @@
+---
+title: "preprocessing"
+author: "Tzu-Yao Lin"
+date: "1/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+```
+
+
+# Load and Sort data
+
+Combined all raw data sets into a great data set, and then spilt it to the training data and the test data.
+```{r}
+Test_IDs <- read_csv("raw_data/Test_IDs.csv") %>% add_column(is_test = TRUE)
+Train_IDs <- read_csv("raw_data/Train_IDs.csv") %>% add_column(is_train = TRUE)
+demographics <- read_csv("raw_data/demographics.csv")
+location <- read_csv("raw_data/location.csv")
+population <- read_csv("raw_data/population.csv")
+satisfaction <- read_csv("raw_data/satisfaction.csv")
+services <- read_csv("raw_data/services.csv")
+status <- read_csv("raw_data/status.csv")
+
+data_all <- demographics %>% 
+  full_join(location, by = "Customer ID") %>% 
+  full_join(population, by = "Zip Code") %>%
+  full_join(satisfaction, by = "Customer ID") %>% 
+  full_join(services, by = "Customer ID") %>% 
+  full_join(status, by = "Customer ID") %>% 
+  full_join(Test_IDs) %>% 
+  full_join(Train_IDs)
+data_train <- Train_IDs %>% left_join(data_all)
+data_test <- Test_IDs %>% left_join(data_all)
+
+write_csv(data_all, "data_all_filled_20220110.csv")
+write_csv(data_train, "data_train.csv")
+write_csv(data_test, "data_test.csv")
+```
+
+
+```{r}
+# gender
+summary(factor(data_all$Gender))
+2731/(2731+2662)
+
+table(factor(data_all$Gender), factor(data_all$`Churn Category`))
+
+.df_gc <- data.frame(gender = factor(data_all$Gender), churn = factor(data_all$`Churn Category`))
+chisq.test(.df_gc$gender, .df_gc$churn)
+
+
+# married
+summary(factor(data_all$Married))
+2792/(2792+2601)
+```
+
+
+```{r}
+# age
+data_all %>% 
+  select(Age, `Under 30`) %>% 
+  group_by(`Under 30`) %>% 
+  summarise(mean_age = mean(Age, na.rm = TRUE))
+## under 30 mean == 24
+data_all %>% 
+  select(Age, `Senior Citizen`) %>% 
+  group_by(`Senior Citizen`) %>% 
+  summarise(mean_age = mean(Age, na.rm = TRUE))
+## senior mean == 72
+data_all %>% 
+  group_by(`Churn Category`) %>% 
+  summarise(mean_age = mean(Age, na.rm = TRUE))
+
+mean(data_all$Age, na.rm=TRUE)
+
+```
+
+
+```{r}
+# num_dep
+data_all %>% 
+  group_by(`Dependents`, `Married`) %>% 
+  summarise(mean_num = mean(`Number of Dependents`, na.rm = TRUE))
+## yes dependent == 2
+data_all %>% 
+  group_by(`Dependents`, `Married`, `Number of Dependents`) %>% 
+  summarise(count = length(Married)) %>% 
+  arrange(`Number of Dependents`)
+data_all %>% 
+  group_by(`Number of Dependents`, `Churn Category`) %>% 
+  summarise(count = length(`Number of Dependents`)) %>% 
+  arrange(`Churn Category`)
+```
+
+
+```{r}
+# marry
+data_all %>% 
+  group_by(`Churn Category`, Married) %>% 
+  summarise(count = length(`Married`))
+
+
+# score
+data_all %>% 
+  group_by(`Churn Category`) %>% 
+  summarise(mean_score = mean(`Satisfaction Score`, na.rm = TRUE))
+data_all %>% 
+  group_by(`Churn Category`, `Satisfaction Score`) %>% 
+  summarise(count = length(`Satisfaction Score`))
+## No churn = 4
+## Atti = 2
+## Compet = 1
+## Dissat = 1
+## Other = 2
+## Price = 2
+
+
+# num_ref
+data_all %>% 
+  group_by(`Referred a Friend`) %>% 
+  summarise(mean_num_ref = mean(`Number of Referrals`, na.rm = TRUE),
+            var_num_ref = var(`Number of Referrals`, na.rm = TRUE),
+            count = length(`Number of Referrals`))
+data_all %>% 
+  group_by(`Referred a Friend`, `Number of Referrals`) %>% 
+  summarise(count = length(`Number of Referrals`))
+
+## (Ref, num) = (Yes, Na) = 1 
+## (Ref, num) = (No, Na) = 0
+## (Ref, num) = (Na, Na) = 0, by the most frequency 
+
+
+
+ggplot(aes(x = Longitu, y = Latitude))
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+dem_ID <- demographics %>% select(`Customer ID`) %>% mutate(dem = "dem")
+loc_ID <- location %>% select(`Customer ID`) %>% mutate(loc = "loc")
+pop_ID <- location %>% select(`Customer ID`) %>% mutate(pop = "pop")
+sat_ID <- location %>% select(`Customer ID`) %>% mutate(sat = "sat")
+ser_ID <- services %>% select(`Customer ID`) %>% mutate(ser = "ser")
+sta_ID <- status %>% select(`Customer ID`) %>%  mutate(sta = "sta")
+ID <- full_join(dem_ID, loc_ID) %>% 
+  full_join(pop_ID) %>% 
+  full_join(sat_ID) %>% 
+  full_join(ser_ID) %>% 
+  full_join(sta_ID)
+train_ID <- left_join(Train_IDs, ID)
+View(train_ID)
+
+dim(left_join(dem_ID, sta_ID))
+View(ID)
+
+
+names(services)
+```
+
+```{r}
+library(GGally)
+
+ggpairs(services, columns = c(4, 6:9, 22:26))
+```
+
+```{r}
+# tenure and offer 
+data_all %>% 
+  group_by(Offer) %>% 
+  summarise(mean = mean(`Tenure in Months`, na.rm = TRUE), 
+            median = median(`Tenure in Months`, na.rm = TRUE),
+            sd = sd(`Tenure in Months`, na.rm = TRUE))
+## (ten, offer) = mean of offer category
+## (NA, A) = 70
+## (NA, B) = 53
+## (NA, C) = 31
+## (NA, D) = 16
+## (NA, E) = 4
+## (NA, None) = 32
+## (NA, NA) = (NA, None) = 32
+
+ggplot(data_all, aes(x = `Tenure in Months`)) +
+  geom_histogram() +
+  facet_grid(~Offer)
+
+
+
+data_all %>% 
+  group_by(`Churn Category`, Offer) %>% 
+  summarise(count = length(Offer)) %>% 
+  arrange(Offer)
+  
+
+summary(factor(data_all$`Phone Service`))
+```
+
+
+```{r}
+summary(factor(data_all$Contract))
+summary(factor(data_all$`Paperless Billing`))
+```
+
+
+
+
+
+
+
+
+```{r}
+var_names <- c("id", "count", "gender", "age", "under_30", "senior", "married", "dpnd", "n_dpnd", "country", "state", "city", "zip", "lat_long", "lat", "long", "ID", "pop", "score", "churn")
+var_types = "cdfdffffdffffccccddf"
+
+.data_all <- read_csv("data_all.csv")
+.data_train <- read_csv("data_train.csv")
+.data_test <- read_csv("data_test.csv")
+
+names(.data_train) <- var_names
+
+```
+
+# Discriptive statistics
+
+Varable's meaning discription: <https://community.ibm.com/community/user/businessanalytics/blogs/steven-macko/2019/07/11/telco-customer-churn-1113>
+
+```{r}
+dim(.data_train)
+
+summary(.data_train)
+
+.d1 <- .data_train %>% 
+  filter(!is.na(churn))
+summary(.d1)
+
+.d1 %>% 
+  select(age, under_30, senior, churn) %>% 
+  filter(is.na(age) | is.na(under_30) | is.na(senior)) %>% 
+  View()
+
+.d <- .data_train
+names(.d) <- NULL
+
+na_matrix <- is.na(.data_train)
+colSums(na_matrix) %>% View()
+colSums(na_matrix) / dim(na_matrix)[1] %>% View()
+
+
+na_cor <- cor(na_matrix[, -1])
+View(na_cor)
+corrplot::corrplot(na_cor, method = "square")
+```
+
+
+```{r}
+head(.data_train)
+```
+```{r}
+
+ggplot(data_all, aes(`Monthly Charge`)) +
+  geom_histogram() +
+  facet_grid(~`Internet Type`)
+
+
+ggplot(data_all, aes(`Avg Monthly GB Download`)) +
+  geom_histogram() +
+  facet_grid(`Unlimited Data` ~ `Internet Type`)
+
+```
+
+
+# Variables/Features selection and missing data imputation
+
+```{r}
+
+```
+

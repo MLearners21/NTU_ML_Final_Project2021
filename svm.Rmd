@@ -1,0 +1,156 @@
+---
+title: "training"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(furrr)
+#library(tidymodels)
+library(fastDummies)
+library(MLmetrics)
+library(modelr)
+library(e1071)
+```
+Custom function
+```{r}
+#
+F1_Score(c(1, 2, 3, 2, 3), c(1, 2, 3, 2, 3))
+```
+
+
+
+```{r}
+result_sample <- read_csv("raw_data/sample_submission.csv", col_types = c("fd"))
+.data_all <- read.csv("data/data_all.csv", 
+                      na.strings = "",
+                      stringsAsFactors = TRUE)
+View(.data_all)
+summary(.data_all)
+str(.data_all)
+sum(is.na(.data_all))
+```
+
+We firstly filled up the missing value by human observation, because very variables are relative and some of them could recover by other variables. See our "Word" documnet for detail.
+
+Then, we filled up remain missing values which are not easily dealing with by the "updown" method.
+
+```{r}
+data_all <- .data_all %>% 
+  fill(gender:t_revenue, .direction = "updown") %>% 
+  select(-index, -id)
+str(data_all)
+sum(is.na(data_all))
+sum(is.na(data_all$churn))
+
+# one hot encoding
+factor_cols <- names(data_all)[which(map_chr(data_all, class) == "factor")]
+data_all2 <- data_all %>% 
+  dummy_cols(select_columns = head(factor_cols, -1), # not includ churn
+             remove_first_dummy = TRUE,
+             remove_selected_columns = TRUE) %>% 
+  mutate(churn = factor(churn,
+                        levels = c("No Churn", "Competitor", "Dissatisfaction", 
+                                   "Attitude", "Price", "Other"),
+                        labels = c(0, 1, 2, 3, 4, 5)) %>% as.character %>% as.integer())
+
+# split data
+data_test <- data_all2 %>% 
+  filter(is_test == TRUE) %>% 
+  select(-is_test, -is_train)
+dim(data_test)
+
+X_test <- data_test %>% select(-churn) %>% as.matrix()
+y_test <- data_test$churn
+
+data_train <- data_all2 %>% 
+  filter(is_train == TRUE, !is.na(churn)) %>% 
+  select(-is_test, -is_train) 
+dim(data_train)
+
+X_train <- data_train %>% select(-churn) %>% as.matrix()
+y_train <- data_train$churn %>% as.factor()
+```
+
+Run SVM
+
+```{r}
+svm_cv_train <- function(train, .gamma, .cost) {
+  .train <- train$data[train$idx, ]
+  X_train <- .train %>% select(-churn) %>% as.matrix()
+  y_train <- .train$churn %>% as.factor()
+  
+  svm(x = X_train, y = y_train, 
+      type = "C-classification",
+      kernel = "radial",
+      gamma = .gamma, 
+      cost = .cost)
+}
+svm_cv_result <- function(model, val) {
+  .val <- val$data[val$idx, ]
+  X_val <- .val %>% select(-churn) %>% as.matrix()
+  y_val <- .val$churn %>% as.factor()
+  y_hat <- predict(model, X_val)
+  f1_score <- F1_Score(y_val, y_hat) 
+}
+svm_cv <- function(data_train_cv, .cost, .gamma) {
+  model <- map(data_train_cv$train, ~ svm_cv_train(., .gamma = .gamma, .cost = .cost))
+  f1_scores <- map2_dbl(model, data_train_cv$test, ~ svm_cv_result(.x, .y))
+  mean_f1_score <- mean(f1_scores)
+}
+```
+
+```{r}
+set.seed(1294)
+data_train_cv <- crossv_kfold(data_train, k = 5)
+
+cost <- gamma <- 10^seq(-3, 3, by = 0.5)
+
+par <- expand.grid(cost, gamma)
+
+plan(multisession, workers = 12)
+result <- future_pmap_dbl(par, ~ svm_cv(data_train_cv, .cost = ..1, .gamma = ..2))
+
+write_csv(par %>% add_column(result = result), "prediction/svm_cv_result.csv")
+```
+
+
+```{r}
+best_par <- par[which.max(result),]
+best_par
+
+best_model <- svm(x = X_train, y = y_train, 
+                  type = "C-classification", kernel = "radial", 
+                  gamma = best_par[2], cost = best_par[1])
+
+best_y_hat <- predict(best_model, X_test)
+table(best_y_hat)
+
+
+.best_result <- tibble(`Customer ID` = .data_all$id[.data_all$is_test],
+                       `Churn Category` = best_y_hat)
+
+best_result <- result_sample %>% 
+  select(`Customer ID`) %>% 
+  left_join(.best_result)
+
+write_csv(best_result, "prediction/pred_svm_try2.csv")
+```
+
+
+```{r}
+data_train_cv2 <- crossv_kfold(data_train, k = 5)
+gamma2 <- 10^seq(-3, 0, by = 0.25)
+cost2 <- 1
+par2 <- expand.grid(cost2, gamma2)
+
+
+result2 <- future_pmap_dbl(par2, ~ svm_cv(data_train_cv2, .cost = ..1, .gamma = ..2))
+
+write_csv(par %>% add_column(result = result), "prediction/svm_cv_result.csv")
+```
+

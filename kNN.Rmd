@@ -1,0 +1,167 @@
+---
+title: "kNN"
+author: "Tzu-Yao Lin"
+date: "1/16/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(furrr)
+#library(tidymodels)
+library(fastDummies)
+library(MLmetrics)
+library(modelr)
+library(class)
+library(kknn)
+```
+
+```{r}
+result_sample <- read_csv("raw_data/sample_submission.csv", col_types = c("fd"))
+.data_all <- read.csv("data/data_all.csv", 
+                      na.strings = "",
+                      stringsAsFactors = TRUE)
+
+data_all <- .data_all %>% 
+  fill(gender:t_revenue, .direction = "updown") %>% 
+  select(-index, -id)
+
+
+# one hot encoding
+factor_cols <- names(data_all)[which(map_chr(data_all, class) == "factor")]
+numeric_cols <- names(data_all)[which(map_chr(data_all, class) %in% c("numeric", "integer", "double"))]
+data_all2 <- data_all %>% 
+  # dummy_cols(select_columns = head(factor_cols, -1), # not includ churn
+  #            remove_first_dummy = TRUE,
+  #            remove_selected_columns = TRUE) %>% 
+  #mutate(across(-(churn:is_train), scale)) %>% 
+  mutate(churn = factor(churn,
+                        levels = c("No Churn", "Competitor", "Dissatisfaction", 
+                                   "Attitude", "Price", "Other"),
+                        labels = c(0, 1, 2, 3, 4, 5)) %>% as.character %>% as.integer())
+#summary(data_all2)
+# split data
+data_test <- data_all2 %>% 
+  filter(is_test == TRUE) %>% 
+  select(-is_test, -is_train)
+dim(data_test)
+
+X_test <- data_test %>% select(-churn) %>% as.matrix()
+y_test <- data_test$churn
+
+data_train <- data_all2 %>% 
+  filter(is_train == TRUE, !is.na(churn)) %>% 
+  select(-is_test, -is_train) 
+dim(data_train)
+
+X_train <- data_train %>% select(-churn) %>% as.matrix()
+y_train <- data_train$churn %>% as.factor()
+```
+
+
+```{r}
+# knn_cv_train <- function(train, .gamma, .cost) {
+#   .train <- train$data[train$idx, ]
+#   X_train <- .train %>% select(-churn) %>% as.matrix()
+#   y_train <- .train$churn %>% as.factor()
+#   
+#   knn()
+# }
+# knn_cv_result <- function(model, val) {
+#   .val <- val$data[val$idx, ]
+#   X_val <- .val %>% select(-churn) %>% as.matrix()
+#   y_val <- .val$churn %>% as.factor()
+#   y_hat <- predict(model, X_val)
+#   f1_score <- F1_Score(y_val, y_hat) 
+# }
+knn_loocv <- function(X_train, y_train, k) {
+  y_hat <- knn.cv(X_train, y_train, k)
+  f1_score <- F1_Score(y_train, y_hat)
+  return(f1_score)
+}
+```
+
+
+```{r}
+k <- 1:50
+result <- map_dbl(k, ~ knn_loocv(X_train, y_train, .))
+write_csv(data.frame(k = k, result = result), "prediction/kNN_loocv_result.csv")
+```
+
+
+```{r}
+best_k <- k[which.max(result)]
+best_k
+
+best_y_hat <- knn(X_train, X_test, y_train, k = best_k)
+table(best_y_hat)
+
+
+.best_result <- tibble(`Customer ID` = .data_all$id[.data_all$is_test],
+                       `Churn Category` = best_y_hat)
+
+best_result <- result_sample %>% 
+  select(`Customer ID`) %>% 
+  left_join(.best_result)
+
+write_csv(best_result, "prediction/kNN_k-6.csv")
+```
+
+
+# kknn
+
+```{r}
+
+model <- train.kknn(I(factor(churn)) ~ ., data_train,
+           kmax = 50, 
+           kernel = c("rectangular", "triangular", "epanechnikov",
+                      "gaussian", "rank", "optimal"))
+plot(model)
+
+result1 <- map_dfr(model$fitted.values, ~ {
+  data.frame(k = attributes(.)$k,
+             kernel = attributes(.)$kernel,
+             f1_score = F1_Score(y_train, .))
+})
+result2 <- model$MISCLASS %>% 
+  as.data.frame() %>% 
+  add_column(k = 1:50) %>%
+  pivot_longer(cols = -k, names_to = "kernel", values_to = "missclassification")
+result <- left_join(result1, result2)
+
+best_par <- result[which.max(result$f1_score), ]
+
+y_hat <- kknn(I(factor(churn)) ~ ., data_train, data_test, 
+              k = best_par$k, kernel = best_par$kernel) %>% fitted()
+
+table(y_hat)
+
+.best_result <- tibble(`Customer ID` = .data_all$id[.data_all$is_test],
+                       `Churn Category` = best_y_hat)
+
+best_result <- result_sample %>% 
+  select(`Customer ID`) %>% 
+  left_join(.best_result)
+
+write_csv(best_result, "prediction/kkNN_k-13_kernel_triangular.csv")
+
+# 用 MISSCLASSIFICATION 做指標預測解過怪
+# best_par2 <- result[which.min(result$missclassification), ]
+# best_par2
+# y_hat2 <- kknn(I(factor(churn)) ~ ., data_train, data_test, 
+#               k = best_par2$k, kernel = best_par2$kernel) %>% fitted()
+# 
+# table(y_hat2)
+```
+
+
+
+
+
+
+
+
